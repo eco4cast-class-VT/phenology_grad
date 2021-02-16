@@ -1,0 +1,70 @@
+---
+title: "Phenology Group Proposed Model and Visualization"
+author: "WWoelmer"
+date: "2/16/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Group Members: Ben Miller, Garret Dettmann, Whitney Woelmer
+
+
+# Forecast Group: Phenology
+# Forecast target variable: Daily mean GCC for 35 days into the future
+# Sites:
+- HARV
+- BART
+- SCBI
+- STEI
+- UKFS
+- GRSM
+- DELA
+- CLBJ
+
+
+# Questions:
+-Do we forecast for all sites? 
+-Can we use different models for different sites?
+-defining model structure
+-what are uncertainty quantification requirements?
+
+```{r}
+# visualize response data
+d <- read_csv(file = "https://data.ecoforecast.org/targets/phenology/phenology-targets.csv.gz")
+d <- d  %>%
+  mutate(doy = yday(time)) %>% 
+  mutate(year = year(time)) %>% 
+  filter(!is.na(gcc_90),
+         gcc_sd > 0)
+library(ggplot2)
+ggplot(data = d, aes(x = doy, y = gcc_90)) +
+  geom_line(aes(col = as.factor(year))) +
+  facet_wrap(~siteID)
+  
+  
+
+```
+
+## Drivers:
+- Day of year
+- precipitation from NOAA's 35-day 31-ensemble forecasts
+- air temperature from NOAA's 35-day 31-ensemble forecasts
+
+# Ideas for processing covariates
+- Just pull the noon measurement of NOAA driver 
+
+## Proposed Model
+- model modified from the one given in Likelihood and Prob Exercise to include covariates of precipitation and growing degree days (based off of air temperature)
+-we are still uncertain of the model structure, but based our parameter and covariate locations within the model on how we thought those values would influence the shape of the function's curve
+# Formula:
+$$\theta_1 + \theta_2 {{exp(\theta_3 + \theta_4 x_1 + \theta_6 x_2 + \theta_7 x_3)   }\over{1+exp(\theta_3 + \theta_4 x_1 +\theta_7 x_3)}}$$
+
+$$x_1 = \text{Day of year}$$
+$$x_2 = \text{precipitiation}$$
+$$x_3 = \text{growing degree days}$$
+
+
+
