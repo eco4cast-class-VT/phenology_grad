@@ -7,6 +7,8 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
 ```
 
 Group Members: Ben Miller, Garret Dettmann, Whitney Woelmer
@@ -38,7 +40,8 @@ d <- d  %>%
   mutate(doy = yday(time)) %>% 
   mutate(year = year(time)) %>% 
   filter(!is.na(gcc_90),
-         gcc_sd > 0)
+         gcc_sd > 0,
+         doy < 182)
 library(ggplot2)
 ggplot(data = d, aes(x = doy, y = gcc_90)) +
   geom_line(aes(col = as.factor(year))) +
