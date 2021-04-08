@@ -1,0 +1,210 @@
+---
+title: "Historical Fit to Phenology Data"
+author: "Garret Dettmann, Ben Miller, Whitney Woelmer"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+remotes::install_github("nimble-dev/nimble", subdir = "packages/nimble")
+library(coda)
+library(daymetr)
+library(tidyverse)
+library(tidybayes)
+library(nimble)
+library(readr)
+library(aws.s3)
+library(lubridate)
+library(neonUtilities)
+library(dplyr)
+library(ggplot2)
+```
+
+
+# Download data and covariates (if needed)
+```{r}
+# #"HARV" & "UKFS" = Garrett
+# #"BART" & "SCBI" & "STEI" = Ben
+# #"GRSM" & "DELA" & "CLBJ" = Whitney
+# Tbase <- 0
+# d <- read_csv(file = "https://data.ecoforecast.org/targets/phenology/phenology-targets.csv.gz")
+# d <- d  %>%
+#   mutate(doy = yday(time)) %>%
+#   filter(!is.na(gcc_90),
+#          gcc_sd > 0)
+# ggplot(d, aes(x = doy, y = gcc_90)) +
+#   geom_point() +
+#   facet_wrap(~siteID)
+# first.date <- as.character(min(d$time))
+# last.date <- as.character(max(d$time))
+# # download NEON temp data for all eight sites
+# site.met <- loadByProduct(dpID="DP1.00003.001", 
+#                               site=c("HARV", "BART", "SCBI", "STEI", "UKFS", "GRSM", "DELA", "CLBJ"),
+#                               startdate = first.date, 
+#                               enddate = last.date)
+# temp <- site.met$TAAT_30min
+# temp <- temp %>% select(siteID, startDateTime:tempTripleMaximum, -endDateTime) %>% 
+#   mutate(time = date(startDateTime)) %>% 
+#   group_by(siteID, time) %>% 
+#   mutate(daily_min = min(tempTripleMinimum, na.rm = TRUE),
+#          daily_max = max(tempTripleMaximum, na.rm = TRUE)) %>% 
+#   distinct(time, .keep_all = TRUE) %>% 
+#   select(siteID, time, daily_min, daily_max) %>% 
+#   mutate(GDD = ((daily_max + daily_min)/2) - Tbase) %>% 
+#     mutate(GDD = ifelse(GDD > 0, GDD, 0))
+# ggplot(temp, aes(x = time, y = daily_min)) +
+#   geom_point() +
+#   facet_wrap(~siteID)
+# ggplot(temp, aes(x = time, y = daily_max)) +
+#   geom_point() +
+#   facet_wrap(~siteID)
+# d <- left_join(d, temp)
+# ggplot(d, aes(x = gcc_90, y = GDD)) +
+#   geom_point() +
+#   facet_wrap(~siteID)
+# # get rid of NAs where the met data starts a month later than the phenocam data
+# d <- na.omit(d)
+# write.csv(d, './phenology_data.csv', row.names = FALSE)
+###################################################
+# once you've already written the .csv you can just read it in here and change GDD with Tbase rather than redownloading the data from NEON
+```
+
+
+# Data were pre-downloaded and loaded into memory from this file. See commented chunk above to see how the data were collected.
+
+```{r}
+d <- read.csv('./phenology_data.csv')
+# can change tBase and the corresponding GDD calculation here
+Tbase <- 10
+d <- d %>% mutate(GDD = ((daily_max + daily_min)/2) - Tbase) %>% 
+    mutate(GDD = ifelse(GDD > 0, GDD, 0))
+```
+
+
+# Fitting Nimble Models and outputting model predictions.
+
+```{r}
+site.list <- list("HARV", "BART", "SCBI", "STEI", "UKFS", "GRSM", "DELA", "CLBJ")
+
+# subset to site and run through each one by one and output the model parameter fits and 
+# the model predictions.
+
+for(j in site.list){
+  d_init <- d[d$siteID == j,]
+  
+  d_run <- list(y = d_init$gcc_90, z = d_init$GDD)
+  
+  pheno_GDD <- nimbleCode({
+    
+    #### Priors
+    x[1] ~ dnorm(0, sd = 1000)
+    k ~ dnorm(0, sd = 1000)
+    r ~ dnorm(0, sd = 1000)
+    sd_add ~ dunif(0.0001, 1000)
+    tau_add <- 1 / (sd_add * sd_add)
+    tau_obs <- 1/(sd_obs*sd_obs)
+    
+    #### Process Model
+    for(t in 2:n){
+      pred[t] <- 1/(1 + exp(r + k*z[t]))
+      x[t] ~ dnorm(pred[t], tau_add)
+    }
+    #### Data Model
+    for(t in 1:n){
+      y[t] ~ dnorm(x[t], tau_obs)
+    }
+    
+  })
+  constants <- list(n = length(d_run$y),
+                    sd_obs = 0.1)
+  
+  #Initialize parameters 
+  nchain = 4
+  init <- list()
+  for(i in 1:nchain){
+    init[[i]] <- list(sd_add = 0.1, # these could also be better informed. I threw in numbers as a starting point
+                      k = 0.5,
+                      r = 1)
+  }
+  
+  nimble.out <- nimbleMCMC(code = pheno_GDD,
+                           data = d_run,
+                           inits = init,
+                           constants = constants,
+                           monitors = c("sd_add",
+                                        "r",
+                                        "k"),
+                           niter = 10000,
+                           nchains = 4,
+                           samplesAsCodaMCMC = TRUE)
+  burnin <- 2000                               
+  nimble.burn <- window(nimble.out, start=burnin)
+  
+  #### diagnostics
+  #gelman.diag(nimble.burn)
+  #traceplot(nimble.burn)
+  plot(nimble.burn, sub = j)
+  
+  #### Plot Model Predictions:
+    #### posterior predictive check
+  post_sample_nimble <- nimble.burn %>% 
+    spread_draws(k, r, sd_add)
+  
+  
+  pred_GDD <- function(r, k, GDD){
+    1/(1 + exp(r + k*GDD))
+  }
+  
+  
+  num_samples <- 1000
+  GDD_new <- d_init$GDD
+  pred_posterior_mean <- matrix(NA, num_samples, length(GDD_new))   # storage for all simulations
+  y_posterior <- matrix(NA, num_samples, length(GDD_new)) 
+  for(i in 1:num_samples){
+    sample_index <- sample(x = 1:nrow(post_sample_nimble), size = 1, replace = TRUE)
+    pred_posterior_mean[i, ] <- pred_GDD(GDD = GDD_new, 
+                                         r = post_sample_nimble$r[sample_index],
+                                         k = post_sample_nimble$k[sample_index])
+    y_posterior[i, ] <- rnorm(length(GDD_new), pred_posterior_mean[i, ], sd = post_sample_nimble$sd_add[sample_index])
+  }
+  
+  
+  n.stats.y <- apply(y_posterior, 2, quantile, c(0.025, 0.5, 0.975))
+  n.stats.y.mean <- apply(y_posterior, 2, mean)
+  n.stats.mean <- apply(pred_posterior_mean, 2, quantile, c(0.025, 0.5, 0.975))
+  
+  out <- tibble(x = GDD_new, # jags uses precision, 1/sd^2
+                date = d_init$time,
+                median = n.stats.y.mean,
+                lower95_y = n.stats.y[1, ],
+                upper95_y = n.stats.y[3, ],
+                lower95_mean = n.stats.mean[1, ],
+                upper95_mean = n.stats.mean[3, ],
+                obs = d_init$gcc_90)
+  
+  #### Diagnostic plots:
+  # ggplot(out, aes(x = GDD_new)) +
+  #   geom_ribbon(aes(ymin = lower95_y, ymax = upper95_y), fill = "lightblue", alpha = 0.5) +
+  #   geom_ribbon(aes(ymin = lower95_mean, ymax = upper95_mean), fill = "pink", alpha = 0.5) +
+  #   geom_line(aes(y = median)) +
+  #   geom_point(aes(y = obs), color = "gray", alpha = 0.3) +
+  #   labs(y = "Phenology GDD model")
+  # ggplot(out, aes(x = as.Date(date), y = median)) +
+  #   geom_point() + # jags uses precision, 1/sd^2
+  #   geom_point(aes(y = obs), color = "gray", alpha = 0.3) 
+  # 
+  
+  #### Model predition
+  out_plot <- ggplot(out[out$date<as.Date('2019-01-01'),], aes(x = as.Date(date), y = median)) +
+    geom_ribbon(aes(ymin = lower95_y, ymax = upper95_y), fill = "lightblue", alpha = 0.5) +
+    geom_ribbon(aes(ymin = lower95_mean, ymax = upper95_mean), fill = "pink", alpha = 0.5) +
+    geom_line() +
+    geom_point(aes(y = obs), color = "gray", alpha = 0.3) +
+    theme_classic() +
+    ggtitle(j)
+  print(out_plot)
+}
+```
