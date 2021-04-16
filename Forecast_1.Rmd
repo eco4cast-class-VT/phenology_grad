@@ -43,8 +43,8 @@ data <- data %>% mutate(GDD_day = ((daily_max + daily_min)/2) - Tbase) %>%
   mutate(GDD_day = ifelse(GDD_day > 0, GDD_day, 0)) %>% 
   mutate(year = year(time)) %>% 
   group_by(siteID, year) %>% 
-  mutate(GDD = cumsum(GDD_day)) %>% 
-  filter(doy < 180)
+  filter(doy < 180) %>% 
+  mutate(GDD = cumsum(GDD_day)) 
 
 # separate out training and forecast time periods
 train <- data[data$time < forecast_start_date, ]
@@ -117,6 +117,7 @@ num_samples <- 1000
 ## Data setup
 new <- forecast # Sets up data based on the forecasted needs for graphing purposes
 x_new <- forecast$GDD # Defines driver variables
+view(x_new)
 pred_posterior_mean <- matrix(NA, num_samples, length(x_new))   # storage for all simulations, blank matrix
 y_posterior <- matrix(NA, num_samples, length(x_new)) # Sets up empty y posterior for each run
 
@@ -187,25 +188,24 @@ noaa_fc <- neon4cast::stack_noaa() # Stacks NOAA Data
 
 # Creates doy columns and year columns from downloaded NOAA Data
 noaa_fc_avg <- noaa_fc %>%
-  mutate(doy = yday(time),
-         year = year(time))
+  mutate(time = lubridate::ymd(as.Date(time)))
 
 # Creates a summary by site, day of year and year of daily min and max temperature
 noaa_fc_avg <- noaa_fc_avg %>%
-  group_by(siteID, doy, year) %>%
+  group_by(siteID, time) %>%
   summarise(daily_min = min(air_temperature),
             daily_max = max(air_temperature))
 
 # Sets up dataframe to be merged with the historic data from NEON
 noaa_fc_avg <- noaa_fc_avg %>%
-  mutate(time = as.Date(doy, origin = "2020-12-31"),
+  mutate(time = time,
          siteID = siteID,
          gcc_90 = NA,
          gcc_sd = NA,
-         doy = doy,
+         doy = lubridate::yday(time),
          daily_min = daily_min,
          daily_max = daily_max,
-         year = year)
+         year = lubridate::year(time))
 
 # Establishes that the gcc columns previously created as 'NA' are numeric so they can be
 # merged with the historic data.
