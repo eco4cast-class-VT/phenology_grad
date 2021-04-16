@@ -49,7 +49,8 @@ noaa_fc <- neon4cast::stack_noaa() # Stacks NOAA Data
 
 # Creates doy columns and year columns from downloaded NOAA Data
 noaa_fc_avg <- noaa_fc %>%
-  mutate(time = lubridate::ymd(as.Date(time)))
+  mutate(doy = yday(time),
+         year = year(time))
 
 # Creates a summary by site, day of year and year of daily min and max temperature
 noaa_fc_avg <- noaa_fc_avg %>%
@@ -60,14 +61,11 @@ noaa_fc_avg <- noaa_fc_avg %>%
 
 # Sets up dataframe to be merged with the historic data from NEON
 noaa_fc_avg <- noaa_fc_avg %>%
-  mutate(time = time,
-         siteID = siteID,
-         gcc_90 = NA,
+  mutate(gcc_90 = NA,
          gcc_sd = NA,
-         doy = lubridate::yday(time),
-         daily_min = daily_min,
-         daily_max = daily_max,
-         year = lubridate::year(time))
+         time = as.Date(doy, origin = "2020-12-31")) %>% 
+    select(time, siteID, gcc_90, gcc_sd, doy, daily_min, daily_max, year)
+
 
 # Establishes that the gcc columns previously created as 'NA' are numeric so they can be
 # merged with the historic data.
