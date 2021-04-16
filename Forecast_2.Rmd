@@ -1,0 +1,99 @@
+---
+  title: "Forecast_Submission"
+author: "Garret Dettman, Ben Miller, Whitney Woelmer"
+date: "4/15/2021"
+output: html_document
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load Libraries
+```{r}
+#remotes::install_github("eco4cast/neon4cast")
+#remotes::install_github("nimble-dev/nimble", subdir = "packages/nimble")
+
+library(neon4cast)
+library(coda)
+library(daymetr)
+library(tidyverse)
+library(tidybayes)
+library(nimble)
+library(readr)
+library(aws.s3)
+library(lubridate)
+library(neonUtilities)
+library(dplyr)
+library(ggplot2)
+```
+
+
+
+# Load historic data and download neaon ensemble members
+```{r}
+#### need to add in code to check for new GCC observations before running the function
+
+# Reads in historic data to tune parameters
+d <- read.csv('phenology_data.csv') # Historic data, needs to be updated occasionaly form NEON
+d$year <- year(d$time)
+d <- subset(d, select=-GDD) # Removes GDD from historic data
+
+pheno_sites <- c("HARV", "BART", "SCBI", "STEI", "UKFS", "GRSM", "DELA", "CLBJ")
+
+# download NOAA forecasts between current date and last date in observed NEON met data
+end_met_obs <- max(as.Date(d$time))
+neon4cast::download_noaa(pheno_sites, date = end_met_obs, interval = "1hr") # Downloads NOAA Data for 35 days into the future from today
+noaa_fc <- neon4cast::stack_noaa() # Stacks NOAA Data
+
+
+# Creates doy columns and year columns from downloaded NOAA Data
+noaa_fc_avg <- noaa_fc %>%
+  mutate(time = lubridate::ymd(as.Date(time)))
+
+# Creates a summary by site, day of year and year of daily min and max temperature
+noaa_fc_avg <- noaa_fc_avg %>%
+  group_by(siteID, doy, year) %>%
+  summarise(daily_min = min(air_temperature) - 273.15,
+            daily_max = max(air_temperature) - 273.15)
+
+
+# Sets up dataframe to be merged with the historic data from NEON
+noaa_fc_avg <- noaa_fc_avg %>%
+  mutate(time = time,
+         siteID = siteID,
+         gcc_90 = NA,
+         gcc_sd = NA,
+         doy = lubridate::yday(time),
+         daily_min = daily_min,
+         daily_max = daily_max,
+         year = lubridate::year(time))
+
+# Establishes that the gcc columns previously created as 'NA' are numeric so they can be
+# merged with the historic data.
+noaa_fc_avg$gcc_90 <- as.numeric(noaa_fc_avg$gcc_90)
+noaa_fc_avg$gcc_sd <- as.numeric(noaa_fc_avg$gcc_sd)
+# Sets the type of the imported historic data as time so it can merge
+d$time <- as.Date(d$time)
+
+## Combines historic data with forecasted data
+d_noaa <- rbind(d, noaa_fc_avg)
+```
+
+
+```{r}
+# Sets the forecast start date, and the forecast end data from d_noaa
+forecast_start_date <- as.Date(max(d_noaa$time)) - 35
+forecast_end_date <- as.Date(max(d_noaa$time))
+
+
+# Define Function for GCC estimation
+source("./pheno_forecast_function.R")
+
+
+# Calls forecasting function on d_noaa
+pheno_forecast(data = d_noaa,
+               forecast_start_date = forecast_start_date,
+               forecast_end_date = forecast_end_date,
+               Tbase = 10)
+```
