@@ -7,6 +7,8 @@ pheno_forecast <- function(data, ## REQUIRED cols: time, siteID, gcc_90, gcc_sd,
                            forecast_end_date,
                            Tbase=10){ # default is 10 but can be changed if specified in the function call
   
+  data1 <- data
+  
   # Calculate driver variable, cumulative GDD, from daily min and max temps
   data <- data %>% mutate(GDD_day = ((daily_max + daily_min)/2) - Tbase) %>% 
     mutate(GDD_day = ifelse(GDD_day > 0, GDD_day, 0)) %>% 
@@ -127,12 +129,41 @@ pheno_forecast <- function(data, ## REQUIRED cols: time, siteID, gcc_90, gcc_sd,
                 doy = new$doy)
   
   
-  prediction_plot <- ggplot(out, aes(x = doy, y = mean)) +
+  #prediction_plot <- ggplot(out, aes(x = doy, y = mean)) +
+  #  geom_ribbon(aes(ymin = Conf_interv_02.5, ymax = Conf_interv_97.5), fill = "lightblue", alpha = 0.5) +
+  #  geom_line() +
+  #  facet_wrap(~siteID) +
+  #  geom_point(aes(y = obs), color = "gray", alpha = 0.3) +
+  #  labs(y = "Phenology GCC Logistic model")
+  df.p <- data1
+  df.p <- df.p[df.p$year == year(Sys.Date()),]
+  out.3 <- out[c("siteID", "mean", "sd", "Conf_interv_02.5", "Conf_interv_97.5", "forecast", "doy")]
+  names(out.3)[names(out.3) == 'forecast'] <- 'fc'
+  
+  df.p$mean <- df.p$gcc_90
+  df.p$sd <- df.p$gcc_sd
+  df.p$Conf_interv_02.5 <- NA
+  df.p$Conf_interv_97.5 <- NA
+  df.p$fc <- 0
+  df.p2 <- df.p[c("siteID", "mean", "sd", "Conf_interv_02.5", "Conf_interv_97.5", "fc", "doy")]
+  
+  plot.df <- rbind(df.p2, out.3)
+  
+  plot.df$fc <- as.character(plot.df$fc)
+  plot.df$fc[plot.df$fc == "0"] <- "Observed"
+  plot.df$fc[plot.df$fc == "1"] <- "Forecast"
+  
+  plot.df$fc <- as.factor(plot.df$fc)
+  plot.df$date <- as.Date(plot.df$doy, origin = "2020-12-31")
+  
+  p1 <- ggplot(data = plot.df, aes(x = date, y = mean, color = fc)) +
     geom_ribbon(aes(ymin = Conf_interv_02.5, ymax = Conf_interv_97.5), fill = "lightblue", alpha = 0.5) +
     geom_line() +
     facet_wrap(~siteID) +
-    geom_point(aes(y = obs), color = "gray", alpha = 0.3) +
-    labs(y = "Phenology GCC Logistic model")
+    geom_point(aes(y = mean)) +
+    labs(y = "Mean Green Chromatic Coordinate (90th Percentile)", x = "Date")
+  
+  prediction_plot <- p1 + theme(legend.title = element_blank())
   print(prediction_plot)
   
   # Generates neat output file and writes a .csv file for the output
