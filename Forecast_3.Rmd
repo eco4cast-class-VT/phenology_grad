@@ -34,7 +34,59 @@ library(ggplot2)
 ```{r}
 #### need to add in code to check for new GCC observations before running the function
 
-# Reads in historic data to tune parameters
+ # Reads in historic data to tune parameters
+ #"HARV" & "UKFS" = Garrett
+ #"BART" & "SCBI" & "STEI" = Ben
+ #"GRSM" & "DELA" & "CLBJ" = Whitney
+
+ d <- read_csv(file = "https://data.ecoforecast.org/targets/phenology/phenology-targets.csv.gz")
+ d <- d  %>%
+   mutate(doy = yday(time),
+          daily_min = NA,
+          daily_max = NA,
+          year = NA) %>%
+   filter(!is.na(gcc_90),
+          gcc_sd > 0)
+ ggplot(d, aes(x = doy, y = gcc_90)) +
+   geom_point() +
+   facet_wrap(~siteID)
+ # read in older gcc and met data
+ d_old <- read.csv('phenology_data.csv') # Historic data, needs to be updated occasionaly form NEON
+ d_old$time <- as.Date(d_old$time)
+ d_old$year <- year(d_old$time)
+ d_old <- subset(d_old, select=-GDD) # Removes GDD from historic data
+ 
+ # remove dates in newest dataset where met data does not yet exist
+ d <- d[!d$time %in% d_old$time, ]
+ d <- d[d$time>as.Date('2020-01-01'),]
+ 
+ d_new <- rbind(d_old, d)
+ 
+ #first.date <- as.character(min(d$time))
+ #last.date <- as.character(max(d$time))
+ # download NEON temp data for all eight sites
+ #site.met <- loadByProduct(dpID="DP1.00003.001", 
+#                               site=c("HARV", "BART", "SCBI", "STEI", "UKFS", "GRSM", "DELA", "CLBJ"),
+#                               startdate = first.date, 
+#                               enddate = last.date)
+# temp <- site.met$TAAT_30min
+# temp <- temp %>% select(siteID, startDateTime:tempTripleMaximum, -endDateTime) %>% 
+#   mutate(time = date(startDateTime)) %>% 
+#   group_by(siteID, time) %>% 
+#   mutate(daily_min = min(tempTripleMinimum, na.rm = TRUE),
+#          daily_max = max(tempTripleMaximum, na.rm = TRUE)) %>% 
+#   distinct(time, .keep_all = TRUE) %>% 
+#   select(siteID, time, daily_min, daily_max) %>% 
+#   mutate(GDD = ((daily_max + daily_min)/2) - Tbase) %>% 
+#     mutate(GDD = ifelse(GDD > 0, GDD, 0))
+#d <- left_join(d, temp)
+
+ # get rid of NAs where the met data starts a month later than the phenocam data
+ #write.csv(d, './phenology_data.csv', row.names = FALSE)
+###################################################
+# once you've already written the .csv with up to date data you can just read it in here and change GDD with Tbase rather than redownloading the data from NEON
+
+
 d <- read.csv('phenology_data.csv') # Historic data, needs to be updated occasionaly form NEON
 d$year <- year(d$time)
 d <- subset(d, select=-GDD) # Removes GDD from historic data
@@ -42,10 +94,18 @@ d <- subset(d, select=-GDD) # Removes GDD from historic data
 pheno_sites <- c("HARV", "BART", "SCBI", "STEI", "UKFS", "GRSM", "DELA", "CLBJ")
 
 # download NOAA forecasts between current date and last date in observed NEON met data
-end_met_obs <- max(as.Date(d$time))
+end_met_obs <- as.Date('2021-03-01')
 neon4cast::download_noaa(pheno_sites, date = end_met_obs, interval = "1hr") # Downloads NOAA Data for 35 days into the future from today
 noaa_fc <- neon4cast::stack_noaa() # Stacks NOAA Data
 
+# this only gets us to April 5 so download the rest of the time
+end_noaa <- as.Date('2021-04-05')
+neon4cast::download_noaa(pheno_sites, date = end_noaa, interval = "1hr") # Downloads NOAA Data for 35 days into the future from today
+noaa_fc_2 <- neon4cast::stack_noaa() # Stacks NOAA Data
+
+end_noaa <- as.Date('2021-04-25')
+neon4cast::download_noaa(pheno_sites, date = end_noaa, interval = "1hr") # Downloads NOAA Data for 35 days into the future from today
+noaa_fc <- neon4cast::stack_noaa() # Stacks NOAA Data
 
 # Creates doy columns and year columns from downloaded NOAA Data
 noaa_fc_avg <- noaa_fc %>%
@@ -55,34 +115,54 @@ noaa_fc_avg <- noaa_fc %>%
 # Creates a summary by site, day of year and year of daily min and max temperature
 noaa_fc_avg <- noaa_fc_avg %>%
   group_by(siteID, doy, year) %>%
-  summarise(daily_min = min(air_temperature) - 273.15,
-            daily_max = max(air_temperature) - 273.15)
+  summarise(daily_min = min(air_temperature, na.rm = TRUE) - 273.15,
+            daily_max = max(air_temperature, na.rm = TRUE) - 273.15)
 
 
 # Sets up dataframe to be merged with the historic data from NEON
 noaa_fc_avg <- noaa_fc_avg %>%
-  mutate(gcc_90 = NA,
-         gcc_sd = NA,
+  mutate(#gcc_90 = NA,
+         #gcc_sd = NA,
          time = as.Date(doy, origin = "2020-12-31")) %>% 
-    select(time, siteID, gcc_90, gcc_sd, doy, daily_min, daily_max, year)
+    select(time, siteID, doy, daily_min, daily_max, year) #  gcc_90, gcc_sd, 
 
-
-# Establishes that the gcc columns previously created as 'NA' are numeric so they can be
-# merged with the historic data.
-noaa_fc_avg$gcc_90 <- as.numeric(noaa_fc_avg$gcc_90)
-noaa_fc_avg$gcc_sd <- as.numeric(noaa_fc_avg$gcc_sd)
-# Sets the type of the imported historic data as time so it can merge
-d$time <- as.Date(d$time)
+# create dataframe with just met data
+d_met <- d_new %>% 
+  select(time, siteID, doy, daily_min, daily_max, year)
+d_met <- na.omit(d_met)
 
 ## Combines historic data with forecasted data
-d_noaa <- rbind(d, noaa_fc_avg)
+d_noaa <- rbind(d_met, noaa_fc_avg)
+
+# add in observed gcc data where it exists
+d_gcc <- d_new %>% 
+  select(time, siteID, gcc_90, gcc_sd)
+
+d_all <- left_join(d_noaa, d_gcc) %>% 
+  select(time, siteID, gcc_90, gcc_sd, doy, daily_min, daily_max, year)
+
+# calculate GDD
+Tbase <- 10
+d_all <- d_all %>% mutate(GDD_day = ((daily_max + daily_min)/2) - Tbase) %>% 
+  mutate(GDD_day = ifelse(GDD_day > 0, GDD_day, 0)) %>% 
+  group_by(siteID, year) %>% 
+  mutate(GDD = cumsum(GDD_day)) %>% 
+  filter(doy < 180)
+
+ ggplot(d_all, aes(x = doy, y = GDD)) +
+   geom_point(aes(color = as.factor(year))) +
+   facet_wrap(~siteID)
+ 
+ write.csv(d_all, paste0('./phenology_data_', Sys.Date(), '.csv'), row.names = FALSE)
+
+
 ```
 
 
 ```{r}
-# Sets the forecast start date, and the forecast end data from d_noaa
-forecast_start_date <- as.Date(max(d_noaa$time)) - 35
-forecast_end_date <- as.Date(max(d_noaa$time))
+# Sets the forecast start date, and the forecast end data from d_all
+forecast_start_date <- as.Date(max(d_all$time)) - 35
+forecast_end_date <- as.Date(max(d_all$time))
 
 
 # Define Function for GCC estimation
@@ -90,8 +170,29 @@ source("./pheno_forecast_function.R")
 
 
 # Calls forecasting function on d_noaa
-pheno_forecast(data = d_noaa,
+pheno_forecast(data = d_all,
                forecast_start_date = forecast_start_date,
                forecast_end_date = forecast_end_date,
                Tbase = 10)
+```
+
+
+```{r}
+
+#### Creates Meatadata YML file and updates if needed, then converts yml file to
+#### XML
+
+#remotes::install_github("eco4cast/neon4cast")
+
+library(neon4cast)
+
+forecast_file <- paste0("phenology-", Sys.Date(),"-VT_Ph_GDD.csv")
+metadata_yaml <- paste0("phenology-metadata-VT_Ph_GDD.yml")
+forecast_id <- paste0("phenology-", Sys.Date(), "-VT_Ph_GDD")
+
+neon4cast::write_metadata_eml(forecast_file = forecast_file,
+                              metadata_yaml = metadata_yaml,
+                              forecast_issue_time = Sys.Date(),
+                              forecast_iteration_id = forecast_id)
+
 ```
