@@ -7,6 +7,11 @@ pheno_forecast <- function(data, ## REQUIRED cols: time, siteID, gcc_90, gcc_sd,
                            forecast_end_date,
                            Tbase=10){ # default is 10 but can be changed if specified in the function call
   
+  library(tidyverse)
+  library(nimble)
+  library(tidybayes)
+  library(lubridate)
+  
   data1 <- data
   
   # Calculate driver variable, cumulative GDD, from daily min and max temps
