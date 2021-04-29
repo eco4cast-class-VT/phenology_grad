@@ -160,6 +160,8 @@ d_all <- d_all %>% mutate(GDD_day = ((daily_max + daily_min)/2) - Tbase) %>%
 
 
 ```{r}
+d_all <- read.csv('./phenology_data_2021-04-27.csv')
+
 # Sets the forecast start date, and the forecast end data from d_all
 forecast_start_date <- as.Date(max(d_all$time)) - 35
 forecast_end_date <- as.Date(max(d_all$time))
