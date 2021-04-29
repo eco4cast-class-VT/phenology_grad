@@ -184,15 +184,15 @@ pheno_forecast(data = d_all,
 
 #remotes::install_github("eco4cast/neon4cast")
 
-library(neon4cast)
-
-forecast_file <- paste0("phenology-", Sys.Date(),"-VT_Ph_GDD.csv")
 metadata_yaml <- paste0("phenology-metadata-VT_Ph_GDD.yml")
-forecast_id <- paste0("phenology-", Sys.Date(), "-VT_Ph_GDD")
+
+forecast_file <- "phenology-2021-04-27-VT_Ph_GDD.csv"
+forecast_id <- "VT_Ph_GDD"
 
 neon4cast::write_metadata_eml(forecast_file = forecast_file,
                               metadata_yaml = metadata_yaml,
                               forecast_issue_time = Sys.Date(),
                               forecast_iteration_id = forecast_id)
+
 
 ```
